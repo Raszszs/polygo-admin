@@ -7,7 +7,7 @@
             <span class="badge bg-primary me-2">Admin</span>
             <div class="dropdown">
                 <a href="#" class="d-flex align-items-center text-decoration-none dropdown-toggle" id="dropdownUser" data-bs-toggle="dropdown">
-                    <span class="me-2"><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username']); ?></span>
+                    <span class="me-2"><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Administrator'); ?></span>
                     <i class="bi bi-person-circle fs-4"></i>
                 </a>
                 <ul class="dropdown-menu dropdown-menu-end">

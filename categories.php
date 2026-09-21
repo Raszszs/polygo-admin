@@ -5,9 +5,22 @@ requireAdmin();
 $pdo = getConnection();
 $message = '';
 $error = '';
+$categoryIcons = [
+    'ic_category_food' => ['Food', 'bi-cup-hot'],
+    'ic_category_drink' => ['Drinks', 'bi-cup-straw'],
+    'ic_category_tech' => ['Technology / Electronics', 'bi-laptop'],
+    'ic_category_fashion' => ['Fashion', 'bi-bag'],
+    'ic_category_books' => ['Books', 'bi-book'],
+    'ic_category_repair' => ['Repair', 'bi-tools'],
+    'ic_category_home' => ['Home', 'bi-house'],
+    'ic_category_laundry' => ['Laundry', 'bi-basket'],
+    'ic_category_delivery' => ['Delivery', 'bi-bicycle'],
+    'ic_category_service' => ['Services', 'bi-person-workspace'],
+    'ic_category_printing' => ['Printing', 'bi-printer']
+];
 
 // Handle category actions
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
     $category_id = $_POST['category_id'] ?? 0;
     
@@ -15,14 +28,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
         $category_name = trim($_POST['category_name'] ?? '');
         $description = trim($_POST['description'] ?? '');
-        $icon = trim($_POST['icon'] ?? 'bi-tag');
+        $icon = trim($_POST['icon'] ?? 'ic_category_tech');
         
         if (empty($category_name)) {
             $error = "Category name is required.";
+        } elseif (!array_key_exists($icon, $categoryIcons)) {
+            $error = "Choose an icon from the PolyGo icon catalogue.";
         } else {
             try {
-                $stmt = $pdo->prepare("INSERT INTO categories (category_name, description, icon) VALUES (?, ?, ?)");
-                $stmt->execute([$category_name, $description, $icon]);
+                $stmt = $pdo->prepare("INSERT INTO categories (name, icon_res) VALUES (?, ?)");
+                $stmt->execute([$category_name, $icon]);
                 $message = "Category added successfully!";
             } catch (PDOException $e) {
                 if ($e->getCode() == 23000) {
@@ -38,14 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'edit') {
         $category_name = trim($_POST['category_name'] ?? '');
         $description = trim($_POST['description'] ?? '');
-        $icon = trim($_POST['icon'] ?? 'bi-tag');
+        $icon = trim($_POST['icon'] ?? 'ic_category_tech');
         
         if (empty($category_name)) {
             $error = "Category name is required.";
+        } elseif (!array_key_exists($icon, $categoryIcons)) {
+            $error = "Choose an icon from the PolyGo icon catalogue.";
         } else {
             try {
-                $stmt = $pdo->prepare("UPDATE categories SET category_name = ?, description = ?, icon = ? WHERE category_id = ?");
-                $stmt->execute([$category_name, $description, $icon, $category_id]);
+                $stmt = $pdo->prepare("UPDATE categories SET name = ?, icon_res = ? WHERE id = ?");
+                $stmt->execute([$category_name, $icon, $category_id]);
                 $message = "Category updated successfully!";
             } catch (PDOException $e) {
                 $error = "Failed to update category.";
@@ -57,14 +74,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete' && $category_id) {
         try {
             // Check if category has listings
-            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM listings WHERE category_id = ?");
+            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM listings l JOIN categories c ON l.category = c.name WHERE c.id = ?");
             $stmt->execute([$category_id]);
             $count = $stmt->fetch()['count'];
             
             if ($count > 0) {
                 $error = "Cannot delete category. It has $count listings associated with it.";
             } else {
-                $stmt = $pdo->prepare("DELETE FROM categories WHERE category_id = ?");
+                $stmt = $pdo->prepare("DELETE FROM categories WHERE id = ?");
                 $stmt->execute([$category_id]);
                 $message = "Category deleted successfully!";
             }
@@ -75,11 +92,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Get all categories
-$stmt = $pdo->query("SELECT * FROM categories ORDER BY category_name");
+$stmt = $pdo->query("SELECT id AS category_id, name AS category_name, icon_res AS icon, '' AS description FROM categories ORDER BY name");
 $categories = $stmt->fetchAll();
 
 // Get count of listings per category
-$stmt = $pdo->query("SELECT category_id, COUNT(*) as count FROM listings GROUP BY category_id");
+$stmt = $pdo->query("SELECT c.id AS category_id, COUNT(l.id) as count FROM categories c LEFT JOIN listings l ON l.category = c.name GROUP BY c.id");
 $category_counts = [];
 while ($row = $stmt->fetch()) {
     $category_counts[$row['category_id']] = $row['count'];
@@ -158,7 +175,9 @@ while ($row = $stmt->fetch()) {
                                                 <td><?php echo $count++; ?></td>
                                                 <td>
                                                     <span class="badge bg-primary p-2">
-                                                        <i class="bi <?php echo htmlspecialchars($category['icon'] ?? 'bi-tag'); ?> fs-5"></i>
+                                                        <?php $iconKey = $category['icon'] ?? ''; ?>
+                                                        <?php $preview = isset($categoryIcons[$iconKey]) ? $categoryIcons[$iconKey][1] : 'bi-tag'; ?>
+                                                        <i class="bi <?php echo htmlspecialchars($preview); ?> fs-5"></i>
                                                     </span>
                                                 </td>
                                                 <td>
@@ -183,7 +202,7 @@ while ($row = $stmt->fetch()) {
                                                         </button>
                                                         
                                                         <?php if (($category_counts[$category['category_id']] ?? 0) == 0): ?>
-                                                            <form method="POST" class="d-inline">
+                                                            <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo csrfToken(); ?>">
                                                                 <input type="hidden" name="category_id" value="<?php echo $category['category_id']; ?>">
                                                                 <input type="hidden" name="action" value="delete">
                                                                 <button type="submit" class="btn btn-danger" 
@@ -228,7 +247,7 @@ while ($row = $stmt->fetch()) {
                     <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Add New Category</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
+                <form method="POST"><input type="hidden" name="csrf_token" value="<?php echo csrfToken(); ?>">
                     <div class="modal-body">
                         <input type="hidden" name="action" value="add">
                         
@@ -243,12 +262,10 @@ while ($row = $stmt->fetch()) {
                         </div>
                         
                         <div class="mb-3">
-                            <label for="icon" class="form-label">Icon (Bootstrap Icon)</label>
-                            <div class="input-group">
-                                <span class="input-group-text"><i class="bi bi-tag"></i></span>
-                                <input type="text" class="form-control" id="icon" name="icon" value="bi-tag" placeholder="bi-tag">
-                            </div>
-                            <small class="text-muted">Example: bi-book, bi-laptop, bi-tshirt</small>
+                            <label for="icon" class="form-label">PolyGo icon</label>
+                            <div class="input-group"><span class="input-group-text"><i id="iconPreview" class="bi bi-cup-hot"></i></span>
+                            <select class="form-select" id="icon" name="icon"><?php foreach ($categoryIcons as $key => $meta): ?><option value="<?= $key ?>" data-preview="<?= $meta[1] ?>"><?= htmlspecialchars($meta[0]) ?></option><?php endforeach; ?></select></div>
+                            <small class="text-muted">These icons render consistently in the Android app.</small>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -268,7 +285,7 @@ while ($row = $stmt->fetch()) {
                     <h5 class="modal-title"><i class="bi bi-pencil"></i> Edit Category</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
+                <form method="POST"><input type="hidden" name="csrf_token" value="<?php echo csrfToken(); ?>">
                     <div class="modal-body">
                         <input type="hidden" name="action" value="edit">
                         <input type="hidden" name="category_id" id="edit_category_id">
@@ -284,12 +301,9 @@ while ($row = $stmt->fetch()) {
                         </div>
                         
                         <div class="mb-3">
-                            <label for="edit_icon" class="form-label">Icon (Bootstrap Icon)</label>
-                            <div class="input-group">
-                                <span class="input-group-text"><i class="bi bi-tag"></i></span>
-                                <input type="text" class="form-control" id="edit_icon" name="icon" value="bi-tag">
-                            </div>
-                            <small class="text-muted">Example: bi-book, bi-laptop, bi-tshirt</small>
+                            <label for="edit_icon" class="form-label">PolyGo icon</label>
+                            <div class="input-group"><span class="input-group-text"><i id="editIconPreview" class="bi bi-tag"></i></span>
+                            <select class="form-select" id="edit_icon" name="icon"><?php foreach ($categoryIcons as $key => $meta): ?><option value="<?= $key ?>" data-preview="<?= $meta[1] ?>"><?= htmlspecialchars($meta[0]) ?></option><?php endforeach; ?></select></div>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -311,8 +325,27 @@ while ($row = $stmt->fetch()) {
                 document.getElementById('edit_category_id').value = button.getAttribute('data-id');
                 document.getElementById('edit_category_name').value = button.getAttribute('data-name');
                 document.getElementById('edit_description').value = button.getAttribute('data-desc') || '';
-                document.getElementById('edit_icon').value = button.getAttribute('data-icon') || 'bi-tag';
+                var editIcon = document.getElementById('edit_icon');
+                var storedIcon = button.getAttribute('data-icon') || 'ic_category_tech';
+                if (!editIcon.querySelector('option[value="' + storedIcon + '"]')) {
+                    storedIcon = storedIcon === 'ic_category_services'
+                        ? 'ic_category_service' : 'ic_category_tech';
+                }
+                editIcon.value = storedIcon;
+                syncPreview('edit_icon', 'editIconPreview');
             });
+            function syncPreview(selectId, previewId) {
+                var select = document.getElementById(selectId);
+                var option = select.options[select.selectedIndex];
+                document.getElementById(previewId).className = 'bi ' + option.dataset.preview;
+            }
+            document.getElementById('icon').addEventListener('change', function() {
+                syncPreview('icon', 'iconPreview');
+            });
+            document.getElementById('edit_icon').addEventListener('change', function() {
+                syncPreview('edit_icon', 'editIconPreview');
+            });
+            syncPreview('icon', 'iconPreview');
         });
     </script>
 </body>

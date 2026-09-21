@@ -7,14 +7,14 @@ $message = '';
 $error = '';
 
 // Handle report actions
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
     $report_id = $_POST['report_id'] ?? 0;
     $listing_id = $_POST['listing_id'] ?? 0;
     
     if ($action === 'resolve' && $report_id) {
         try {
-            $stmt = $pdo->prepare("UPDATE reports SET status = 'resolved' WHERE report_id = ?");
+            $stmt = $pdo->prepare("INSERT INTO admin_report_actions (report_id, status) VALUES (?, 'resolved') ON DUPLICATE KEY UPDATE status = VALUES(status)");
             $stmt->execute([$report_id]);
             $message = "Report resolved successfully!";
         } catch (PDOException $e) {
@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     if ($action === 'dismiss' && $report_id) {
         try {
-            $stmt = $pdo->prepare("UPDATE reports SET status = 'dismissed' WHERE report_id = ?");
+            $stmt = $pdo->prepare("INSERT INTO admin_report_actions (report_id, status) VALUES (?, 'dismissed') ON DUPLICATE KEY UPDATE status = VALUES(status)");
             $stmt->execute([$report_id]);
             $message = "Report dismissed successfully!";
         } catch (PDOException $e) {
@@ -37,12 +37,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Start transaction
             $pdo->beginTransaction();
             
-            // Update listing status to removed
-            $stmt = $pdo->prepare("UPDATE listings SET status = 'removed' WHERE listing_id = ?");
+            // Archive the same listing that Android reads.
+            $stmt = $pdo->prepare("UPDATE listings SET archived_at = NOW() WHERE id = ?");
             $stmt->execute([$listing_id]);
             
             // Resolve the report
-            $stmt = $pdo->prepare("UPDATE reports SET status = 'resolved' WHERE report_id = ?");
+            $stmt = $pdo->prepare("INSERT INTO admin_report_actions (report_id, status) VALUES (?, 'resolved') ON DUPLICATE KEY UPDATE status = VALUES(status)");
             $stmt->execute([$report_id]);
             
             $pdo->commit();
@@ -58,19 +58,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $status = $_GET['status'] ?? '';
 
 // Build query
-$query = "SELECT r.*, 
-          l.title as listing_title, l.listing_id,
-          u.username as reporter_username, u.full_name as reporter_name,
-          l2.username as seller_username, l2.full_name as seller_name
-          FROM reports r 
-          LEFT JOIN listings l ON r.listing_id = l.listing_id 
-          LEFT JOIN users u ON r.reported_by = u.user_id 
-          LEFT JOIN users l2 ON l.user_id = l2.user_id 
-          WHERE 1=1";
+$query = "SELECT r.id AS report_id, r.reason, r.details, r.created_at,
+          COALESCE(a.status, 'pending') AS status, l.title AS listing_title, l.id AS listing_id,
+          u.full_name AS reporter_username, u.full_name AS reporter_name,
+          seller.full_name AS seller_username, seller.full_name AS seller_name
+          FROM reports r LEFT JOIN admin_report_actions a ON a.report_id = r.id
+          LEFT JOIN listings l ON r.target_type = 'listing' AND CAST(r.target_id AS UNSIGNED) = l.id
+          LEFT JOIN users u ON r.reporter_id = u.id
+          LEFT JOIN users seller ON l.owner_id = seller.id WHERE 1=1";
 $params = [];
 
 if ($status) {
-    $query .= " AND r.status = ?";
+    $query .= " AND COALESCE(a.status, 'pending') = ?";
     $params[] = $status;
 }
 
@@ -84,13 +83,13 @@ $reports = $stmt->fetchAll();
 $stmt = $pdo->query("SELECT COUNT(*) as total FROM reports");
 $total_reports = $stmt->fetch()['total'];
 
-$stmt = $pdo->query("SELECT COUNT(*) as total FROM reports WHERE status = 'pending'");
+$stmt = $pdo->query("SELECT COUNT(*) as total FROM reports r LEFT JOIN admin_report_actions a ON a.report_id = r.id WHERE COALESCE(a.status, 'pending') = 'pending'");
 $pending_reports = $stmt->fetch()['total'];
 
-$stmt = $pdo->query("SELECT COUNT(*) as total FROM reports WHERE status = 'resolved'");
+$stmt = $pdo->query("SELECT COUNT(*) as total FROM admin_report_actions WHERE status = 'resolved'");
 $resolved_reports = $stmt->fetch()['total'];
 
-$stmt = $pdo->query("SELECT COUNT(*) as total FROM reports WHERE status = 'dismissed'");
+$stmt = $pdo->query("SELECT COUNT(*) as total FROM admin_report_actions WHERE status = 'dismissed'");
 $dismissed_reports = $stmt->fetch()['total'];
 ?>
 <!DOCTYPE html>
@@ -260,7 +259,7 @@ $dismissed_reports = $stmt->fetch()['total'];
                                                 <td>
                                                     <?php if ($report['status'] === 'pending'): ?>
                                                         <div class="btn-group btn-group-sm">
-                                                            <form method="POST" class="d-inline">
+                                                            <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo csrfToken(); ?>">
                                                                 <input type="hidden" name="report_id" value="<?php echo $report['report_id']; ?>">
                                                                 <input type="hidden" name="listing_id" value="<?php echo $report['listing_id']; ?>">
                                                                 <input type="hidden" name="action" value="remove_listing">
@@ -270,14 +269,14 @@ $dismissed_reports = $stmt->fetch()['total'];
                                                                     <i class="bi bi-trash"></i> Remove
                                                                 </button>
                                                             </form>
-                                                            <form method="POST" class="d-inline">
+                                                            <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo csrfToken(); ?>">
                                                                 <input type="hidden" name="report_id" value="<?php echo $report['report_id']; ?>">
                                                                 <input type="hidden" name="action" value="resolve">
                                                                 <button type="submit" class="btn btn-success" title="Resolve Report">
                                                                     <i class="bi bi-check2"></i>
                                                                 </button>
                                                             </form>
-                                                            <form method="POST" class="d-inline">
+                                                            <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo csrfToken(); ?>">
                                                                 <input type="hidden" name="report_id" value="<?php echo $report['report_id']; ?>">
                                                                 <input type="hidden" name="action" value="dismiss">
                                                                 <button type="submit" class="btn btn-secondary" title="Dismiss Report"
