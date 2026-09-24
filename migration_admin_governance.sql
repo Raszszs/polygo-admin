@@ -18,3 +18,4 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
     INDEX idx_admin_audit_created (created_at),
     INDEX idx_admin_audit_entity (entity_type, entity_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
